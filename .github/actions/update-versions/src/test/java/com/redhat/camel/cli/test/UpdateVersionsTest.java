@@ -117,8 +117,15 @@ public class UpdateVersionsTest {
                     git.add().addFilepattern("CamelJBang.java").call();
                     final String msg = "Upgrade to RHBQ Platform " + platformVersion;
                     log.info("git: " + msg);
-                    git.commit().setMessage(msg).call();
-                    git.push().setRemote(remoteAlias).add(branch).call();
+                    git.commit()
+                        .setAuthor("Camel JBang Catalog Autoupdater", "autoupdater@localhost")
+                        .setMessage(msg)
+                        .call();
+                    git.push()
+                        .setRemote(remoteAlias)
+                        .add(branch)
+                        .setCredentialsProvider(creds)
+                        .call();
                 } else {
                     log.info("No change in CamelJBang.java in branch " + branch);
                 }
