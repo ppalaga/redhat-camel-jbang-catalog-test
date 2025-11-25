@@ -20,7 +20,9 @@ runs:
     - name: Update versions
       shell: bash
       env:
+        GITHUB_ISSUE_ID: '1'
         GITHUB_TOKEN: ${{ inputs.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
         JBANG_CATALOG_GIT_REPOSITORY: https://github.com/${{ github.repository }}.git
       run: |
         cd .github/actions/update-versions

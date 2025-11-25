@@ -1,6 +1,9 @@
 package com.redhat.camel.cli.test;
 
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.io.Writer;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -54,86 +57,162 @@ public class UpdateVersionsTest {
             remoteUrl = "https://github.com/redhat-camel/jbang-catalog.git";
         }
         log.info("Using remote " + remoteUrl);
+        final String ghRepository = System.getenv("GITHUB_REPOSITORY");
         final String ghToken = System.getenv("GITHUB_TOKEN");
-        final String remoteMavenRepositoryBaseUrl = "https://maven.repository.redhat.com/ga";
-        final String quarkusRegistryBaseUrl = "https://registry.quarkus.redhat.com";
-        final ComparableVersion minimalCamelVersion = new ComparableVersion("4.14.0");
+        final String issueId = System.getenv("GITHUB_ISSUE_ID");
+        try {
 
-        final String remoteAlias = "upstream";
-        final CredentialsProvider creds = new GitHubTokenCredentials(ghToken);
+            final String remoteMavenRepositoryBaseUrl = "https://maven.repository.redhat.com/ga";
+            final String quarkusRegistryBaseUrl = "https://registry.quarkus.redhat.com";
+            final ComparableVersion minimalCamelVersion = new ComparableVersion("4.14.0");
 
-        /* From branch name such as 4.14.x to RHBQ Platform version, such as 3.27.0.redhat-00001 */
-        final Map<String, String> camelMajorMinorToRhbqPlatformVersion = collectVersions(
-                quarkusRegistryBaseUrl,
-                remoteMavenRepositoryBaseUrl,
-                minimalCamelVersion);
+            final String remoteAlias = "upstream";
+            final CredentialsProvider creds = new GitHubTokenCredentials(ghToken);
 
+            /* From branch name such as 4.14.x to RHBQ Platform version, such as 3.27.0.redhat-00001 */
+            final Map<String, String> camelMajorMinorToRhbqPlatformVersion = collectVersions(
+                    quarkusRegistryBaseUrl,
+                    remoteMavenRepositoryBaseUrl,
+                    minimalCamelVersion);
 
-        final String uuid = UUID.randomUUID().toString();
-        final Path checkoutDir = Path.of("target/checkout-" + uuid);
-        Files.createDirectories(checkoutDir);
-        try (Git git = Git.init()
-                .setDirectory(checkoutDir.toFile())
-                .call()) {
-            git.remoteAdd().setName(remoteAlias).setUri(new URIish(remoteUrl)).call();
+            final String uuid = UUID.randomUUID().toString();
+            final Path checkoutDir = Path.of("target/checkout-" + uuid);
+            Files.createDirectories(checkoutDir);
+            try (Git git = Git.init()
+                    .setDirectory(checkoutDir.toFile())
+                    .call()) {
+                git.remoteAdd().setName(remoteAlias).setUri(new URIish(remoteUrl)).call();
 
-            /* remoteBranchMap is from branch name such as 4.14.x to commit hash so that we can properly reset it */
-            /* remoteBranchMap is ordered from newest to oldest branch so that we can pick the first as a base for a new major.minor.x branch */
-            final Map<String, String> remoteBranchMap = fetchBranches(git, remoteUrl, remoteAlias, creds);
+                /* remoteBranchMap is from branch name such as 4.14.x to commit hash so that we can properly reset it */
+                /*
+                 * remoteBranchMap is ordered from newest to oldest branch so that we can pick the first as a base for a
+                 * new major.minor.x branch
+                 */
+                final Map<String, String> remoteBranchMap = fetchBranches(git, remoteUrl, remoteAlias, creds);
 
-            final Path camelJBangJavaPath = checkoutDir.resolve("CamelJBang.java");
-            for (Entry<String, String> en : camelMajorMinorToRhbqPlatformVersion.entrySet()) {
-                final String branch = en.getKey();
-                final String platformVersion = en.getValue();
+                final Path camelJBangJavaPath = checkoutDir.resolve("CamelJBang.java");
+                for (Entry<String, String> en : camelMajorMinorToRhbqPlatformVersion.entrySet()) {
+                    final String branch = en.getKey();
+                    final String platformVersion = en.getValue();
 
-                final String remoteHead;
-                if (remoteBranchMap.containsKey(branch)) {
-                    /* The branch exists in the remote already */
-                     remoteHead = remoteBranchMap.get(branch);
-                     log.info("Updating branch " + branch + " to RHBQ Platform " + platformVersion);
-                } else {
-                    /* The branch does not exist yet in the remote so we create it based on the latest existing major.minor.x branch */
-                    final String latestExistingBranch = remoteBranchMap.keySet().iterator().next();
-                    log.info("Creating branch " + branch + " from  " + latestExistingBranch + " and updating it to RHBQ Platform " + platformVersion);
-                    remoteHead = remoteBranchMap.get(latestExistingBranch);
-                }
+                    final String remoteHead;
+                    if (remoteBranchMap.containsKey(branch)) {
+                        /* The branch exists in the remote already */
+                        remoteHead = remoteBranchMap.get(branch);
+                        log.info("Updating branch " + branch + " to RHBQ Platform " + platformVersion);
+                    } else {
+                        /*
+                         * The branch does not exist yet in the remote so we create it based on the latest existing
+                         * major.minor.x branch
+                         */
+                        final String latestExistingBranch = remoteBranchMap.keySet().iterator().next();
+                        log.info("Creating branch " + branch + " from  " + latestExistingBranch
+                                + " and updating it to RHBQ Platform " + platformVersion);
+                        remoteHead = remoteBranchMap.get(latestExistingBranch);
+                    }
 
-                /* Checkout or create the local branch */
-                git.branchCreate().setName(branch).setForce(true).setStartPoint(remoteHead).call();
-                git.checkout().setName(branch).call();
-                git.reset().setMode(ResetType.HARD).setRef(remoteHead).call();
-                final Ref ref = git.getRepository().exactRef("HEAD");
-                log.info("Reset the working copy to {}@{}", branch, ref.getObjectId().getName());
+                    /* Checkout or create the local branch */
+                    git.branchCreate().setName(branch).setForce(true).setStartPoint(remoteHead).call();
+                    git.checkout().setName(branch).call();
+                    git.reset().setMode(ResetType.HARD).setRef(remoteHead).call();
+                    final Ref ref = git.getRepository().exactRef("HEAD");
+                    log.info("Reset the working copy to {}@{}", branch, ref.getObjectId().getName());
 
-                /* Check/edit the versions in CamelJBang.java */
-                final String oldSource = Files.readString(camelJBangJavaPath, StandardCharsets.UTF_8);
-                final Map<String, String> newProps = new LinkedHashMap<>();
-                newProps.put("-Dcamel.jbang.quarkusGroupId", "com.redhat.quarkus.platform");
-                newProps.put("-Dcamel.jbang.quarkusArtifactId", "quarkus-bom");
-                newProps.put("-Dcamel.jbang.quarkusVersion", platformVersion.replace("0000", "0001"));
-                final String newSource = edit(oldSource, newProps);
-                if (!newSource.equals(oldSource)) {
-                    Files.writeString(camelJBangJavaPath, newSource, StandardCharsets.UTF_8);
-                    git.add().addFilepattern("CamelJBang.java").call();
-                    final String msg = "Upgrade to RHBQ Platform " + platformVersion;
-                    log.info("git: " + msg);
-                    git.commit()
-                        .setAuthor("Camel JBang Catalog Autoupdater", "autoupdater@localhost")
-                        .setMessage(msg)
-                        .call();
-                    git.push()
-                        .setRemote(remoteAlias)
-                        .add(branch)
-                        .setCredentialsProvider(creds)
-                        .call();
-                } else {
-                    log.info("No change in CamelJBang.java in branch " + branch);
+                    /* Check/edit the versions in CamelJBang.java */
+                    final String oldSource = Files.readString(camelJBangJavaPath, StandardCharsets.UTF_8);
+                    final Map<String, String> newProps = new LinkedHashMap<>();
+                    newProps.put("-Dcamel.jbang.quarkusGroupId", "com.redhat.quarkus.platform");
+                    newProps.put("-Dcamel.jbang.quarkusArtifactId", "quarkus-bom");
+                    newProps.put("-Dcamel.jbang.quarkusVersion", platformVersion.replace("0000", "0001"));
+                    final String newSource = edit(oldSource, newProps);
+                    if (!newSource.equals(oldSource)) {
+                        Files.writeString(camelJBangJavaPath, newSource, StandardCharsets.UTF_8);
+                        git.add().addFilepattern("CamelJBang.java").call();
+                        final String msg = "Upgrade to RHBQ Platform " + platformVersion;
+                        log.info("git: " + msg);
+                        git.commit()
+                                .setAuthor("Camel JBang Catalog Autoupdater", "autoupdater@localhost")
+                                .setMessage(msg)
+                                .call();
+                        git.push()
+                                .setRemote(remoteAlias)
+                                .add(branch)
+                                .setCredentialsProvider(creds)
+                                .call();
+                    } else {
+                        log.info("No change in CamelJBang.java in branch " + branch);
+                    }
                 }
             }
+            /* Close if needed */
+            RestAssured.given()
+                    .accept("application/vnd.github+json")
+                    .header("Authorization", "Bearer " + ghToken)
+                    .header("X-GitHub-Api-Version", "2022-11-28")
+                    .body("""
+                            {
+                                "state":"closed"
+                            }
+                            """)
+                    .patch("https://api.github.com/repos/" + ghRepository + "/issues/" + issueId)
+                    .then()
+                    .statusCode(200);
+
+            throw new RuntimeException("foo");
+        } catch (Exception e) {
+            reportFailure(e, ghRepository, issueId, ghToken);
         }
     }
 
-    static Map<String, String> fetchBranches(Git git, String remoteUrl, String remoteAlias, CredentialsProvider creds) throws InvalidRemoteException, TransportException, GitAPIException {
+    static void reportFailure(Exception e, String ghRepository, String issueId, String ghToken) {
+
+        final Writer stackTrace = new StringWriter();
+        try (PrintWriter pw = new PrintWriter(stackTrace)) {
+            e.printStackTrace(pw);
+        }
+
+        /* Add comment */
+        String st = stackTrace.toString()
+        .replace("\"", "\\\"")
+        .replace("\\", "\\\\")
+        .replace("\n", "\\n")
+        .replace("\t", "\\t");
+        if (st.length() > 65000) {
+            st = st.substring(0, 65000);
+        }
+        final String body = """
+                {
+                    "body" : "`update-versions` failed:\\n\\n```\\n%s\\n```"
+                }
+                """.formatted(st);
+        //log.info("Creating new comment " + body);
+        RestAssured.given()
+                .accept("application/vnd.github+json")
+                .header("Authorization", "Bearer " + ghToken)
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .body(body)
+                .post("https://api.github.com/repos/" + ghRepository + "/issues/" + issueId + "/comments")
+                .then()
+                .statusCode(201);
+
+        /* Open the issue if needed */
+        RestAssured.given()
+                .accept("application/vnd.github+json")
+                .header("Authorization", "Bearer " + ghToken)
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .body("""
+                        {
+                            "state":"open"
+                        }
+                        """)
+                .patch("https://api.github.com/repos/" + ghRepository + "/issues/" + issueId)
+                .then()
+                .statusCode(200);
+
+    }
+
+    static Map<String, String> fetchBranches(Git git, String remoteUrl, String remoteAlias, CredentialsProvider creds)
+            throws InvalidRemoteException, TransportException, GitAPIException {
         final Set<String> remoteBranches = Git.lsRemoteRepository()
                 .setCredentialsProvider(creds)
                 .setHeads(true)
@@ -144,7 +223,6 @@ public class UpdateVersionsTest {
                 .filter(b -> BRANCH_PATTERN.matcher(b).matches())
                 .collect(Collectors.toCollection(() -> new TreeSet<>(new BranchComparator().reversed())));
         log.info("Available branches in {}: {}", remoteAlias, remoteBranches);
-
 
         Map<String, String> result = new LinkedHashMap<>();
         for (String branch : remoteBranches) {
@@ -161,10 +239,11 @@ public class UpdateVersionsTest {
         return Collections.unmodifiableMap(result);
     }
 
-    static Map<String, String> collectVersions(String quarkusRegistryBaseUrl, String remoteMavenRepositoryBaseUrl, ComparableVersion minimalCamelVersion) {
+    static Map<String, String> collectVersions(String quarkusRegistryBaseUrl, String remoteMavenRepositoryBaseUrl,
+            ComparableVersion minimalCamelVersion) {
         Map<String, String> result = new LinkedHashMap<>();
 
-        final JsonPath jsonPath = RestAssured.get(quarkusRegistryBaseUrl  + "/client/platforms")
+        final JsonPath jsonPath = RestAssured.get(quarkusRegistryBaseUrl + "/client/platforms")
                 .then()
                 .statusCode(200)
                 .extract().jsonPath();
@@ -192,7 +271,8 @@ public class UpdateVersionsTest {
                                             .statusCode(200)
                                             .extract().xmlPath();
 
-                                    final NodeChildren deps = xmlPath.get("project.dependencyManagement.dependencies.dependency");
+                                    final NodeChildren deps = xmlPath
+                                            .get("project.dependencyManagement.dependencies.dependency");
                                     final Optional<String> camelVersionOpt = deps.list().stream()
                                             .map(n -> {
                                                 String groupId = n.getNode("groupId").value();
@@ -259,7 +339,7 @@ public class UpdateVersionsTest {
             replacementBuilder.append(m.group(2));
 
             final String replacement = replacementBuilder.toString();
-            if (javaOpts.equals(replacement )) {
+            if (javaOpts.equals(replacement)) {
                 return oldSource;
             }
             m.appendReplacement(sb, replacement);
